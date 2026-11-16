@@ -1,0 +1,93 @@
+1. Nonlinearity (20 points)
+1.1 Can you explain what nonlinearity is and why it might be necessary to consider nonlinear
+relationships between variables?
+1.2 Write down the mathematical equation for a nonlinear model and provide an example of
+an application where it might be appropriate.
+1.3 Can a nonlinear model be more parsimonious than a linear model? Write down
+mathematical formulae for both the linear and nonlinear models to support your answer.
+1.4 Surrogate data are used for testing for nonlinearity. What characteristics are typically
+preserved when generating surrogates? Give the names of two surrogate techniques and
+describe the approaches for implementing them.
+1.5 Define information, entropy, and mutual information, and also provide mathematical
+formulas. Describe how entropy can be used for constructing a feature for measuring
+regularity and give an example of an application. Explain how mutual information can be
+used for feature selection and why it might be better than correlation.
+
+
+2. Classification using trees (25 points)
+2.1. Decision trees are often used to transform a set of observations into a specific
+recommended action. Describe the components (nodes, branches) of a decision tree. What is
+pruning, and why might it be necessary to prune the tree? Why are decision trees an attractive
+method for classification in practical applications?
+2.2. Suppose an organization has built a rule-based classifier using domain knowledge. After
+collecting a large amount of data, outline the steps required to improve upon the existing
+approach by constructing a data-driven classifier. How would you advise testing the validity
+of the new model?
+2.3. Use the daily weather data for six East African cities (Kigali, Nairobi, Kampala,
+Dodoma, Bujumbura and Dar es Salaam) provided on Canvas. The target variable is
+rain_tomorrow, which is 1 if more than 1 mm of rain falls on the next day and 0 otherwise.
+Report the proportion of days with rain tomorrow in each city. Which city has the highest and
+which the lowest share of rainy days? Test whether the differences between cities could be
+due to chance. (Use a chi-square test of independence between city and rain_tomorrow.)
+2.4. Pool the observations from all six cities and, using today's ten weather variables as
+predictors (temp_mean, temp_max, temp_min, humidity_mean, dew_point_mean,
+pressure_mean, cloud_cover_mean, wind_speed_mean, radiation_mean and
+precipitation_sum), construct a decision tree to classify rain_tomorrow and display the
+structure of the tree using a graphic.
+2.5. Evaluate the performance of the tree before and after pruning, using 10-fold
+cross-validation. Prune the tree either by limiting its depth or using cost-complexity pruning,
+and choose the pruning strength (maximum depth or alpha) by cross-validation.
+2.6. Compare the performance of the final tree with logistic regression using accuracy and
+ROC AUC, and comment on the advantages and disadvantages of both. Which weather
+variables does the tree rely on most? Which model would you use for a daily rain
+classification, and why?
+
+
+3. Classification using KNN: will it rain tomorrow? (25 points)
+3.1 By focusing on small neighborhoods of state space, it is possible to construct
+parsimonious models. Describe the concept behind this general approach and a step-by-step
+procedure for implementing such a model.
+3.2 Consider the challenge of predicting whether it will rain tomorrow, using today's weather
+as predictors. To construct a KNN classifier, how will you transform the available variables?
+3.3 Calculate the performance of the classifier versus the number of neighbors used and
+provide a graphic to display the result. What is the optimal number of neighbors based on
+ROC AUC using cross-validation of 10 folds?
+3.4 Explain why some distance metrics are sensitive to the kind of features used. Evaluate the
+performance using 4 different distance metrics (e.g., Euclidean, Manhattan, and Chebyshev,
+and cosine), with and without standardizing the predictors.
+3.5 Compare the best KNN classifier with the final decision tree from Question 2 using
+accuracy and ROC AUC, and comment on the advantages and disadvantages of KNN.
+3.6 The data are consecutive days. Explain why random cross-validation might overestimate
+performance when forecasting future rainfall. Suggest an alternative validation approach.
+Which model would you use for a daily rain forecast, and why?
+
+
+4. Regression: predicting PM2.5 air pollution(30 points)
+This question uses the same dataset as previous questions. The challenge is to predict the
+daily average concentration of fine particulate matter (pm2_5, in µg/m³) from the daily
+weather variables (temp_mean, temp_max, temp_min, humidity_mean, dew_point_mean,
+pressure_mean, cloud_cover_mean, wind_speed_mean, radiation_mean, precipitation_sum)
+and the concentrations of other pollutants (co, no2, so2, o3, aod, dust), where aod is the
+aerosol optical depth. You will study each of the six cities separately.
+4.1 Calculate the average of each of the 16 predictors for each of the six cities. Show the
+results as a 4 by 4 grid of bar graphs. Use a separate panel for each predictor because the
+variables have very different units. How do the results relate to common sense (or the
+intuition of an atmospheric scientist) based on the available variables and city locations?
+4.2 What is the correlation between each predictor and the dependent variable (pm2_5), using
+a separate analysis for each city? Which variable is most relevant for each city, and which
+variables are relevant in every city?
+Calculate the correlation between pm10 and pm2_5 in each city. Discuss the advantages and
+disadvantages of including PM10 as a predictor, considering whether it would be available at
+prediction time.
+4.3 For each city, standardize the predictors and use Lasso and cross-validation(10 folds) to
+provide a plot of MSE against lambda (Estimate the standardization parameters using training
+data only). How many predictors does the best Lasso model keep in each city, and how do the
+features selected compare with an approach of setting a threshold on the absolute correlation
+coefficient(|r| > 0.3)?
+4.4 For each city, use the features identified by LASSO, standardize them, construct a KNN
+regression model, and choose the best number of neighbors by cross-validation of 10 folds.
+4.5 For each city, how does KNN with all the predictors perform compared to KNN with the
+LASSO-selected features, measured by MSE and R2 with cross-validation of 10 folds, and in
+which cities is the difference largest? (Perform feature selection, standardization, and
+hyperparameter tuning within each fold's training data)
+
