@@ -1,0 +1,485 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{textcomp}
+\renewcommand\IEEEkeywordsname{Keywords}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathpazo}
+\usepackage[american]{babel}
+\usepackage[center]{caption}
+\usepackage{listings}
+\usepackage{float}
+\usepackage{amsmath,amssymb,exscale}
+\usepackage{blindtext}
+\usepackage{verbatim}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyvrb}
+\usepackage{bera}
+\usepackage{mathtools}
+\usepackage{scalerel}
+\usepackage{tikz}
+\usepackage{booktabs}
+\usepackage[bookmarks=false]{hyperref}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\makeatletter
+\let\old@ps@headings\ps@headings
+\let\old@ps@IEEEtitlepagestyle\ps@IEEEtitlepagestyle
+\def\confheader#1{%
+  \def\ps@headings{%
+    \old@ps@headings
+    \def\@oddhead{\strut\hfill#1\hfill\strut}%
+    \def\@evenhead{\strut\hfill#1\hfill\strut}%
+  }%
+  \def\ps@IEEEtitlepagestyle{%
+    \old@ps@IEEEtitlepagestyle
+    \def\@oddhead{\strut\hfill#1\hfill\strut}%
+    \def\@evenhead{\strut\hfill#1\hfill\strut}%
+  }%
+  \ps@headings
+}
+\makeatother
+
+\begin{document}
+
+\title{Data, Inference and Applied Machine Learning: Assignment VI}
+
+\author{\IEEEauthorblockN{Paul O Afolabi} \\
+AndrewID: pafolabi}
+
+\maketitle
+
+%==================================================================
+\section{Introduction}
+This report presents my solutions to Assignment 6. It covers all four questions: a conceptual discussion of nonlinearity, surrogate data, and information-theoretic measures (information, entropy and mutual information), a classification study that uses decision trees to predict next-day rainfall in six East African cities, a second classification study of the same rainfall task using k-nearest neighbours (KNN), and a regression study that predicts daily PM$_{2.5}$ air pollution in each city separately using Lasso feature selection followed by KNN regression. The accompanying notebook contains all the code used to produce the numbers and figures discussed below. This write up focuses on what was done, why it was done that way, and what the results mean in plain terms.
+
+%==================================================================
+\section{Libraries Used}
+Python was used for every question, in a Jupyter notebook. The random seed was fixed at 42 throughout so that every cross-validation split and every result can be reproduced exactly.
+
+The main libraries used are:
+\begin{itemize}
+    \item \textbf{numpy:} numerical work such as arrays, penalty grids and out-of-fold probability collection.
+    \item \textbf{pandas:} loading the daily file, sorting by city and date, cross-tabulating rainfall by city, and grouping by city for the means and correlations.
+    \item \textbf{matplotlib:} every plot, including the tree diagrams, cross-validation curves, ROC curves and the $4 \times 4$ grid of city means.
+    \item \textbf{scipy:} the chi-square test of independence between city and next-day rain (\texttt{chi2\_contingency}).
+    \item \textbf{sklearn:} the decision tree and cost-complexity pruning, logistic regression, Lasso, KNN classification and regression, standardisation inside pipelines, stratified, ordinary and time-series cross-validation, and the accuracy, ROC AUC, MSE and $R^2$ metrics.
+\end{itemize}
+
+%==================================================================
+\section{Dataset and General Setup}
+Questions 2, 3 and 4 all use one daily dataset covering six East African cities: Kigali, Nairobi, Kampala, Dodoma, Bujumbura and Dar es Salaam. Each observation is one city on one day. The file contains 9{,}144 observations, made up of 1{,}524 consecutive days per city from 29 July 2022 to 29 September 2026. For each day there are ten weather variables (\texttt{temp\_mean}, \texttt{temp\_max}, \texttt{temp\_min}, \texttt{humidity\_mean}, \texttt{dew\_point\_mean}, \texttt{pressure\_mean}, \texttt{cloud\_cover\_mean}, \texttt{wind\_speed\_mean}, \texttt{radiation\_mean} and \texttt{precipitation\_sum}), the pollution variables PM$_{2.5}$, PM$_{10}$, \texttt{co}, \texttt{no2}, \texttt{so2}, \texttt{o3}, \texttt{aod} (aerosol optical depth) and \texttt{dust}, and the binary target \texttt{rain\_tomorrow}, which is 1 if more than 1~mm of rain falls on the next day and 0 otherwise. Air pollution measurements are missing for the first six days of each city (36 observations in total). Those days are kept for Questions 2 and 3, which need only the weather variables, and excluded from Question 4, which needs the pollution variables, leaving 1{,}518 days per city there. Wherever scaling, feature selection or tuning is part of a method, it is fitted inside the training folds only, using pipelines, so that no test observation can influence a modelling choice. That discipline matters throughout this assignment and is returned to in every empirical question.
+
+%==================================================================
+\section{Question 1: Nonlinearity}
+\subsection{Overview}
+This question is a conceptual discussion of five linked ideas: what nonlinearity means and why it must be considered, the mathematical form of a nonlinear model with a suitable application, whether a nonlinear model can be more parsimonious than a linear one, how surrogate data are used to test for nonlinearity, and how information, entropy and mutual information are defined and used in practice. No code or data was required for this question; the notebook cells contain written answers only.
+
+\subsection{Discussion of Results}
+\begin{enumerate}
+    \item \textbf{What nonlinearity is and why it matters:} Nonlinearity denotes a relationship between variables that cannot adequately be represented by a single straight line. Under a linear relationship, a unit increase in the predictor produces a constant change in the response, irrespective of the starting value. Under a nonlinear relationship, the size of that change depends on the level of the predictor: the relationship may accelerate, saturate, stay flat before rising sharply beyond a threshold, or increase and then decrease. Rainfall illustrates this well. A modest increase in humidity on an already dry day may leave the probability of rain largely unchanged, whereas the same increase beyond high levels of humidity and cloud cover can raise that probability substantially, so a linear specification describes the process poorly. Three considerations motivate explicit allowance for nonlinearity. First, fitting a linear model to a curved relationship gives biased predictions with systematic patterns left in the residuals. Second, inference can mislead: a symmetric rise-and-fall relationship can produce a slope close to zero despite a strong underlying association. Third, many processes are nonlinear by construction, including growth towards a limit, dose--response relationships that saturate, and rainfall formation that requires moisture to exceed a threshold. The practical conclusion is that exploratory plots and residual diagnostics should be examined, and a linear specification should be compared against flexible alternatives on held-out data; a nonlinear form is warranted where it materially reduces out-of-sample error.
+
+    \item \textbf{Equation of a nonlinear model and an application:} A general nonlinear model is written as
+    \begin{equation}
+        y_i = f(x_i; \theta) + \varepsilon_i,
+    \end{equation}
+    where $y_i$ is the response for observation $i$, $x_i$ denotes the predictors, $\theta$ denotes the unknown parameters to be estimated, $f$ is a nonlinear function, and $\varepsilon_i$ is the error term. The defining property is that at least one parameter enters $f$ nonlinearly, for example inside an exponent or a ratio, so that the model cannot be rewritten as a weighted sum of known terms. A representative form is the saturating growth curve
+    \begin{equation}
+        y = a\left(1 - e^{-bx}\right) + \varepsilon, \qquad a > 0,\; b > 0,
+    \end{equation}
+    where $a$ is the asymptotic level approached by $y$ and $b$ governs the rate of approach. Because $b$ appears inside the exponential, the model is nonlinear in its parameters. By contrast, a polynomial such as $y = \beta_0 + \beta_1 x + \beta_2 x^2 + \varepsilon$ is curved in $x$ but remains linear in its parameters, so it is a linear model with a transformed predictor rather than a nonlinear model in this sense. An appropriate application is the relationship between drug dose and pharmacological effect. At very low doses the effect is negligible; as dose increases the effect rises steeply; beyond a high dose it plateaus at a physiological maximum. A linear specification would increase without bound and would eventually predict effects exceeding that maximum, while the saturating curve starts at zero and approaches $a$ asymptotically, so each parameter keeps a direct interpretation.
+
+    \item \textbf{Can a nonlinear model be more parsimonious?:} Yes. Parsimony here means attaining an adequate fit with few estimated parameters, each contributing materially to the specification. Consider a true relationship that rises rapidly at first and then flattens towards an upper level, as in the previous item. A specification linear in its parameters must approximate that curvature through polynomial terms:
+    \begin{equation}
+        y = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 + \beta_4 x^4 + \beta_5 x^5 + \varepsilon.
+    \end{equation}
+    Six parameters are required, and more may be needed where the curvature is pronounced or the range of $x$ is wide. The fitted curve may still oscillate towards the extremes of the range, and the individual $\beta$ coefficients admit no straightforward interpretation in isolation. The nonlinear specification for the same shape,
+    \begin{equation}
+        y = a\left(1 - e^{-bx}\right) + \varepsilon,
+    \end{equation}
+    contains only two parameters, the asymptote $a$ and the rate $b$. The correct functional shape is obtained across the full range, the parameters correspond to identifiable features of the process, and the risk of overfitting is reduced because fewer parameters are available to absorb sampling noise. Linearity in the parameters therefore does not guarantee simplicity: where the underlying shape matches a known nonlinear form, the nonlinear specification is the more parsimonious choice. Comparison on held-out data remains advisable, since a parsimonious specification only helps where its assumed shape approximates the data generating process.
+
+    \item \textbf{Surrogate data for testing nonlinearity:} Surrogate data provide a reference framework for judging whether an apparently nonlinear pattern could have arisen from a linear process. A large ensemble of artificial series is generated so that the linear properties of the observed series are retained while nonlinear structure is destroyed. A nonlinear statistic computed on the observed series is then compared with its distribution across the surrogates: a value in the extreme tail is evidence against the linear null, while a value inside the surrogate range provides no such evidence. Rejection concerns the specified null hypothesis, including its stationarity assumptions; it is not unconditional proof of nonlinear dynamics. The characteristics conventionally preserved are the series length and sampling interval, the mean and variance, the power spectrum (equivalently the autocorrelation structure), and, in refined methods, the marginal distribution of the observations. The first technique is \textbf{phase randomisation}, also called Fourier transform surrogates. The Fourier transform decomposes the series into amplitudes and phases; the amplitudes are kept exactly and the phases are replaced by random values drawn subject to the symmetry required for a real-valued series, after which the inverse transform is applied. Keeping the amplitudes guarantees an identical power spectrum and autocorrelation, while randomising the phases destroys the phase coupling in which nonlinear dependence resides. The resulting values are approximately Gaussian, so this tests a linear Gaussian null. The second technique is the \textbf{amplitude adjusted Fourier transform (AAFT)}, together with its iterated refinement (IAAFT). Standard AAFT first Gaussianises the series by a rank-based mapping onto Gaussian quantiles, then phase-randomises that series, then maps the result back by rank onto the original values. IAAFT iterates two operations: imposing the original Fourier amplitudes, and rank-remapping onto the original values. Ending on the rank-remapping step preserves the empirical amplitude distribution exactly and matches the power spectrum approximately, so AAFT methods test the wider null of a linear process observed through a static nonlinear measurement function. Significance is assessed by rank: with 99 surrogates, an observed statistic more extreme than every surrogate in the pre-specified direction attains significance of 1 in 100 (1\% one-sided); examining either tail doubles this to 2\%, so a two-sided test at 1\% requires 199 surrogates.
+
+    \item \textbf{Information, entropy and mutual information:} The information content of an event is inversely related to its probability: rare events convey more information than common ones. For an outcome $x$ with probability $p(x)$, information is defined as
+    \begin{equation}
+        I(x) = -\log_2 p(x).
+    \end{equation}
+    With logarithms to base 2 the unit is the bit: an outcome of probability one half carries 1 bit, while an outcome of probability one eighth carries 3 bits. Entropy is the expected information of a random variable. For a discrete variable $X$,
+    \begin{equation}
+        H(X) = -\sum_x p(x) \log_2 p(x).
+    \end{equation}
+    Entropy approaches zero where one outcome is almost certain, since the next value occasions little surprise, and is maximised where outcomes are equiprobable. Related quantities are the joint entropy $H(X, Y)$ and the conditional entropy $H(X \mid Y) = H(X, Y) - H(Y)$, the uncertainty remaining in $X$ after observing $Y$. Mutual information quantifies the reduction in uncertainty about one variable afforded by knowledge of another:
+    \begin{equation}
+        I(X; Y) = \sum_{x, y} p(x, y) \log_2 \frac{p(x, y)}{p(x)\, p(y)} = H(X) - H(X \mid Y).
+    \end{equation}
+    It is zero if and only if $X$ and $Y$ are independent, increases with the strength of dependence of arbitrary form, and is symmetric in its arguments. To build an entropy-based feature for regularity, care is needed: the ordinary entropy of the values inside a window measures the spread of the value distribution, not temporal predictability by itself. An alternating sequence 010101 and a random binary sequence with equally frequent zeros and ones both have marginal entropy of one bit, although the former is perfectly predictable and the latter is not. A regularity feature must therefore be built from temporal patterns. Sample entropy, based on the persistence of matched patterns when extended by one observation, and permutation entropy, based on the ordinal patterns of short subsequences, satisfy that requirement: regular, repetitive behaviour gives low values, irregular behaviour gives high values. A representative application is monitoring interbeat intervals from an electrocardiogram, where cardiac strain is often accompanied by more stereotyped beating and falling sample entropy, which may flag patients needing closer assessment before changes in mean interval become apparent. For feature selection, each candidate predictor is scored by its mutual information with the target and the highest scorers are retained. Mutual information is preferable to Pearson correlation where nonlinear dependence is suspected, because correlation detects only linear association: if $Y = X^2$ with $X$ symmetric about zero, correlation is approximately zero and a correlation screen discards $X$, yet knowledge of $X$ determines $Y$ exactly (while knowledge of $Y$ leaves the sign of $X$ unresolved), so mutual information is substantially positive and the variable is retained. The same advantage applies to threshold relationships. Two limitations must be acknowledged: probability estimation by binning or nearest neighbours makes mutual information sensitive to those choices and more data-demanding than correlation, and univariate scoring ignores redundancy, so retained predictors may duplicate information and need subsequent redundancy checks.
+\end{enumerate}
+
+%==================================================================
+\section{Question 2: Classification Using Trees}
+\subsection{Overview}
+This question first discusses decision trees conceptually: their components, pruning, and why they are attractive in practice, and how an organisation with a rule-based classifier can improve on it with a data-driven classifier and test that the new model is valid. It then turns to the East African data. The share of days followed by rain is reported for each city and tested with a chi-square test, all six cities are pooled to grow a decision tree for \texttt{rain\_tomorrow} from today's ten weather variables, the tree is evaluated before and after pruning with 10-fold cross-validation, and the final pruned tree is compared with logistic regression on accuracy and ROC AUC.
+
+\subsection{Discussion of Results}
+\begin{enumerate}
+    \item \textbf{Components of a decision tree, pruning, and practical appeal:} A decision tree converts a set of observations on a case into a specific recommended action through a sequence of binary questions, conventionally drawn with the root at the top. The root node contains all training observations and poses the first, most informative question, for example whether precipitation on the current day is at most 0.55~mm. Every node that poses a question is an internal node, and each test concerns a single variable against a single threshold. The lines leaving a node are its branches, typically two per node, corresponding to the affirmative and negative outcomes, with each branch carrying the subset of observations producing that outcome. Successive partitioning yields progressively smaller and purer subsets, in the sense that one class increasingly predominates. At each internal node the variable and threshold are chosen to maximise the reduction in node impurity, measured by Gini impurity by default in the implementation used here (entropy, equivalently information gain, is the usual alternative). Terminal boxes are leaf nodes, which pose no further question and deliver the classification, such as rain or no rain, commonly with the class proportions observed in that leaf during training. An operational action is then attached to each leaf, for example issuing or withholding a rain alert. The depth of the tree is the length of the longest root-to-leaf path. Pruning denotes the removal of branches, with a node thereby converted into a leaf, even at some cost to training fit. It is necessary because an unrestricted tree keeps splitting until leaves contain very few observations, at which point idiosyncratic features of the training sample, such as a single unusual storm, are effectively memorised and generalisation to new observations deteriorates. An excessively large tree is also difficult to interpret, to translate into action, and may be unstable under minor perturbations of the data. Pruning may be imposed during growth (pre-pruning) through a maximum depth or minimum leaf size, or applied retrospectively (post-pruning) through cost-complexity pruning, in which a penalty parameter, conventionally denoted alpha, regulates the trade-off between fit and tree size. Trees remain attractive in applied settings for several reasons: the rule sequence behind any classification can be inspected and explained to decision makers, which supports trust and accountability; no scaling of predictors is required; nonlinear and threshold effects are accommodated without explicit specification; data preparation demands are modest; and a ranking of predictor importance is obtained as a by-product. The principal limitation is instability, since modest changes in the data may alter the upper splits; pruning and evaluation on unseen data are the standard safeguards.
+
+    \item \textbf{From a rule-based classifier to a data-driven classifier:} The existing rule-based classifier is treated as the benchmark to improve upon, and its specification is held fixed while the data-driven alternative is developed. The prediction task is first defined precisely: what constitutes a positive case, what information is available at the time of decision, and the relative costs of the two error types. A clean analytical dataset is then assembled by linking historical inputs to known outcomes, using the fields available to the rules together with any additional fields now collected. Erroneous records are corrected or flagged, and fields that would leak the outcome, for example fields completed only after the outcome is known, are excluded. The data are subsequently partitioned into training, tuning and final test subsets; where observations are ordered in time, later observations are reserved for testing so that evaluation reproduces operational conditions. A data-driven classifier is fitted on the training subset and its hyperparameters tuned on the tuning subset. Comparison with the rule system is conducted on identical locked test cases using operationally relevant criteria, including accuracy, ROC AUC and error costs. Cases in which the rules outperform the model are then examined: some will reflect data defects requiring correction, while others may identify domains in which expert rules retain value and should be kept as a fallback. Deployment proceeds through a shadow period, in which predictions are recorded without being acted upon, followed by phased introduction with monitoring for drift. On validity, the final test subset must remain untouched until the model and all tuning decisions are finalised, so reported performance stays unbiased, and uncertainty intervals should accompany point estimates. Performance should be examined within important subgroups, such as individual sites or seasons, together with calibration assessment where decisions depend on predicted probabilities. A particularly stringent check is evaluation on a later time period or a new site excluded from development. A model that prevails only on data used in its construction does not warrant confidence.
+
+    \item \textbf{Rainfall share by city and the chi-square test:} Table~\ref{tab:rainshare} reports the proportion of days with rain tomorrow in each city. Kampala records the highest share, at 60.3\% (919 of 1{,}524 days). Dar es Salaam follows at 49.7\%, then Kigali at 42.5\%, Nairobi at 40.6\% and Bujumbura at 34.3\%. Dodoma records the lowest share, at 21.5\% (328 days). The gap between the wettest and driest cities approaches 39 percentage points, which is substantial given the sample sizes, and because each city contributes exactly 1{,}524 days the proportions are directly comparable. Across the six cities combined, 41.5\% of days are followed by rain. The chi-square test of independence between city and \texttt{rain\_tomorrow} gives a statistic of 549.20 on 5 degrees of freedom, with a p-value far below 0.001 (about $1.9 \times 10^{-116}$), so independence is rejected very strongly. The smallest expected cell count under independence is approximately 632, comfortably above values at which the approximation becomes unreliable. That interpretation carries a qualification: consecutive days within a city are unlikely to be fully independent, and cities may share synoptic weather systems, so the nominal p-value does not account for temporal or possible spatial dependence; large expected counts address cell size, not dependence. Subject to that qualification, the ordering is geographically coherent: Kampala lies within the moist Lake Victoria basin, whereas Dodoma occupies a considerably drier inland zone.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrrrr}
+            \toprule
+            City & No rain & Rain & Total & Rain share (\%) \\
+            \midrule
+            Kampala & 605 & 919 & 1{,}524 & 60.3 \\
+            Dar es Salaam & 766 & 758 & 1{,}524 & 49.7 \\
+            Kigali & 876 & 648 & 1{,}524 & 42.5 \\
+            Nairobi & 905 & 619 & 1{,}524 & 40.6 \\
+            Bujumbura & 1{,}002 & 522 & 1{,}524 & 34.3 \\
+            Dodoma & 1{,}196 & 328 & 1{,}524 & 21.5 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Days with rain tomorrow, by city (Question 2.3)}
+        \label{tab:rainshare}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 201735.png}
+        \caption{Share of days with rain tomorrow, by city (Question 2.3 cell output)}
+        \label{fig:q23_rainshare}
+    \end{figure}
+
+    \item \textbf{The pooled unpruned tree:} Pooling all 9{,}144 observations and fitting a tree with no size limit on today's ten weather variables gives a structure of depth 30 with 1{,}623 leaves. That scale indicates memorisation of fine detail in the training data and precludes interpretation as an operational rule set, so the notebook figure displays only the first three levels, which contain the substantively important partitions. The root partition is defined by precipitation on the current day: observations with \texttt{precipitation\_sum} at most 0.55~mm are separated from wetter observations. This ordering is consistent with the temporal clustering of rainfall, whereby a wet day elevates the probability of rain on the following day. Subsequent partitions involve \texttt{humidity\_mean}, again consistent with the requirement of moist air for continued rain formation. One path may be read as follows: observations characterised by precipitation above 0.55~mm together with high humidity terminate predominantly in rain leaves, whereas dry observations with low humidity terminate in no-rain leaves. The several hundred partitions below this level largely accommodate noise rather than signal, which is the difficulty addressed through pruning in the next item.
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 201937.png}
+        \caption{Top three levels of the full pooled tree (Question 2.4 cell output)}
+        \label{fig:q24_fulltree}
+    \end{figure}
+
+    \item \textbf{Pruning, before and after (10-fold cross-validation):} Before pruning, the unrestricted tree attains cross-validated accuracy of 0.657 and ROC AUC of 0.647, against a training ROC AUC of 1.0 (Table~\ref{tab:pruning}). The discrepancy between training and cross-validated performance is clear evidence of overfitting: the tree reproduces the training observations almost exactly while generalising poorly. For reference, a trivial rule predicting no rain on every day would achieve accuracy of 0.585, since 58.5\% of days remain dry; the unrestricted tree improves on that benchmark only modestly under honest evaluation. Pruning produces a marked improvement. ROC AUC rises to approximately 0.777 at maximum depth 2, 0.792 at depth 3, and 0.797 at depth 4, where accuracy is 0.726. Depth 4 gives the highest accuracy among the tested depths (0.726, against an unrounded 0.7255 at depth 5), whereas depth 5 gives a marginally higher ROC AUC (0.7969 against 0.7965, a difference far inside the fold-to-fold standard deviation of about 0.015). Depth 4 is therefore not claimed to be best on both measures: it is chosen because it leads on accuracy, is effectively tied on ROC AUC, and is the shallower, smaller tree (16 leaves, against 32 at depth 5). Performance deteriorates beyond depth 5 as memorisation resumes. Cost-complexity pruning corroborates this pattern: the best value examined, alpha equal to 0.001, yields accuracy of 0.729 and ROC AUC of 0.795, close to the depth-limited result. Given the agreement between the two approaches, the depth constraint is adopted on grounds of transparency and ease of representation. The final tree has depth 4 and 16 leaves. Pruning thus reduces the number of leaves from 1{,}623 to 16 while increasing accuracy by approximately 7 percentage points and ROC AUC by approximately 15 percentage points. In substantive terms, a near-perfect fit to historical observations is exchanged for a compact rule set that retains its performance on new observations. One qualification applies to every score in this item: the same 10 folds were used both to choose the pruning strength and to report the chosen tree's performance, so the reported score of the selected tree is expected to be slightly optimistic on genuinely new data; nested cross-validation, or a final untouched test set, would be required for a fully unbiased estimate, and the temporally ordered evaluation in Question 3, with tuning repeated inside each training window, provides the stricter check. Inspection of the final structure confirms that every path commencing with a dry day (\texttt{precipitation\_sum} at most 0.55~mm) terminates in a no-rain leaf, so rain classifications arise only after a wet day. Within wet days the requirement differs by intensity: for moderate precipitation (above 0.55 and at most 2.75~mm) a rain classification additionally requires \texttt{humidity\_mean} above 77.02, whereas after heavy precipitation (above 2.75~mm) the tree classifies rain irrespective of the subsequent humidity partition.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrr}
+            \toprule
+            Tree & Accuracy & ROC AUC \\
+            \midrule
+            No limit (before pruning) & 0.657 & 0.647 \\
+            Maximum depth 2 & 0.713 & 0.777 \\
+            Maximum depth 3 & 0.719 & 0.792 \\
+            Maximum depth 4 (final tree) & 0.726 & 0.797 \\
+            Maximum depth 5 & 0.726 & 0.797 \\
+            Cost complexity, $\alpha = 0.001$ & 0.729 & 0.795 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Tree performance before and after pruning, 10-fold cross-validation (Question 2.5)}
+        \label{tab:pruning}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 202210.png}
+        \caption{Tree score by maximum depth (Question 2.5 cell output)}
+        \label{fig:q25_depth}
+    \end{figure}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 202413.png}
+        \caption{Tree score by cost-complexity alpha (Question 2.5 cell output)}
+        \label{fig:q25_alpha}
+    \end{figure}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 202530.png}
+        \caption{Final pruned tree with maximum depth 4 (Question 2.5 cell output)}
+        \label{fig:q25_finaltree}
+    \end{figure}
+
+    \item \textbf{Final tree versus logistic regression:} On the same folds, logistic regression performs marginally better on both criteria, attaining accuracy of 0.734 and ROC AUC of 0.810, compared with 0.726 and 0.797 for the final tree (Table~\ref{tab:treelogreg}). The difference is small relative to the fold-to-fold standard deviation of approximately 0.015 and is accordingly interpreted as a slight rather than decisive advantage. The ROC curves show the same pattern, with the logistic curve lying slightly above the tree curve over most thresholds. Both models substantially exceed the trivial no-rain benchmark of 0.585, confirming that genuine predictive signal is present. Variable importance within the final tree is dominated by \texttt{precipitation\_sum}, which accounts for approximately 0.80 of the total reduction in impurity, followed by \texttt{humidity\_mean} at approximately 0.15. All remaining variables contribute less than 0.02 each, and \texttt{temp\_mean}, \texttt{temp\_max} and \texttt{wind\_speed\_mean} contribute zero. This does not imply that the remaining variables carry no information; rather, conditional on precipitation and humidity, their additional partitions do not survive pruning. The tree essentially encodes a persistence mechanism, whereby wet and moist conditions tend to continue. The relative merits may be summarised as follows. The tree supplies inspectable rules that can be printed and operationalised directly, requires no scaling, and identifies thresholds automatically; against this, its predictions change discontinuously at threshold values, the structure may prove unstable under data shifts, and small but systematic effects that fail to win a partition are discarded. Logistic regression supplies smooth predicted probabilities, distributes weight across all ten predictors, and ranks observations somewhat more accurately; against this, its predictors are standardised in the pipeline so that the default L2 penalty treats them on comparable scales (scaling is not a logical requirement of logistic regression itself), the decision boundary is linear in the predictors unless nonlinear terms are introduced explicitly, and coefficients are less directly translatable into field rules than tree paths. For daily rain classification, logistic regression is the preferred model. Operational deployment requires a probability rather than a categorical pronouncement, so that alert thresholds can be set according to the relative costs of missed rain events and false alarms. Logistic regression offers the superior ranking and smoother probabilities at no cost in accuracy. The pruned tree remains valuable as an interpretable account of why wet, humid days attract high scores.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrr}
+            \toprule
+            Model & Accuracy & ROC AUC \\
+            \midrule
+            Final tree (depth 4) & 0.726 & 0.797 \\
+            Logistic regression & 0.734 & 0.810 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Final tree versus logistic regression, 10-fold cross-validation (Question 2.6)}
+        \label{tab:treelogreg}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 202653.png}
+        \caption{ROC curves for the final tree and logistic regression (Question 2.6 cell output)}
+        \label{fig:q26_roc}
+    \end{figure}
+    
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 202804.png}
+        \caption{Variable importance in the final tree (Question 2.6 cell output)}
+        \label{fig:q26_importance}
+    \end{figure}
+\end{enumerate}
+
+%==================================================================
+\section{Question 3: Classification Using KNN -- Will It Rain Tomorrow?}
+\subsection{Overview}
+This question revisits the pooled rainfall classification with a local, neighbourhood-based method. It first explains the general idea of modelling from small neighbourhoods of state space and gives a step-by-step implementation procedure. It then explains how the weather variables must be transformed for a KNN classifier, measures performance against the number of neighbours $k$, compares four distance metrics with and without standardisation, compares the best KNN classifier with the final tree from Question 2, and finally examines why random cross-validation can flatter a forecast of consecutive daily data and what validation design should replace it.
+
+\subsection{Discussion of Results}
+\begin{enumerate}
+    \item \textbf{The neighbourhood idea and how to implement it:} The underlying principle is that observations with similar states tend to be followed by similar outcomes. Each day is represented as a point in a state space whose coordinates are the meteorological measurements for that day, including temperature, humidity and current precipitation. A neighbourhood consists of the historical days whose points lie close to the point representing a new day. Rather than estimating a single global equation, prediction is based on the outcomes of those neighbouring historical days. The approach is parsimonious in that few global parameters are estimated: the principal choices are the definition of closeness and the number of neighbours admitted, while the stored dataset itself substitutes for an extensive set of fitted coefficients. Implementation proceeds as follows. A state vector is first constructed for each day from variables available at forecast time. Predictors are placed on comparable scales and a distance measure is selected, since proximity is meaningless where one coordinate is recorded in hundreds and another in single digits. The neighbourhood size $k$ is selected by cross-validation rather than by judgement. For a new day, the $k$ nearest historical days are retrieved. Their outcomes are then combined: classification proceeds by majority vote, with the vote share providing an approximate probability, while regression proceeds by averaging. Performance is finally evaluated on observations excluded from the neighbour-store construction process, and $k$, the scaling and the distance measure are revised until held-out performance ceases to improve. Two trade-offs govern these choices. Very small neighbourhoods capture local detail but are sensitive to noise, since a single atypical day can reverse a classification. Large neighbourhoods are stable but may obscure genuine local structure, for example where coastal regimes are diluted by inland observations. Dimensionality also warrants care, because distances become less discriminative as coordinates are added.
+
+    \item \textbf{Transforming the variables for KNN:} The six cities are pooled and the same ten meteorological predictors employed in Question 2 are retained, ensuring comparability between the KNN and tree results. City is not introduced as a predictor, in accordance with the formulation of the task in terms of current weather. All ten predictors are continuous, so no dummy encoding is required; the meteorological fields are complete, so no imputation rule is necessary; and the target is excluded from the predictor set. The principal transformation is standardisation to z-scores: each variable is centred on its mean and divided by its standard deviation, giving mean zero and unit variance. Critically, the centring and scaling constants are estimated within training folds only and then applied to the corresponding test fold; estimation on the full dataset would leak test information into training. The necessity of this step is evident from the variable ranges: pressure is centred near 901 with a standard deviation of about 55, and radiation near 242, while humidity is recorded in tens and precipitation predominantly between zero and a few units (mean 2.54~mm). On raw scales, Euclidean-type distances would be dominated by pressure and radiation, while humidity and precipitation, the latter being the strongest signal identified by the tree, would exert negligible influence. Two further features are noted. Precipitation is strongly skewed, with many zeros and a long upper tail (maximum 63.5~mm), so very wet days remain distant from the bulk of observations even after standardisation; a logarithmic-type compression would be a reasonable variant, but the raw scale is retained so that the predictor set remains identical to that of Question 2. In addition, the three temperature variables are mutually correlated, so thermal information is effectively counted repeatedly in distance calculations; all three are retained for comparability, although removing redundancy would be a legitimate way of reducing the dimensionality of the state space.
+
+    \item \textbf{Performance against the number of neighbours:} With standardised inputs and Euclidean distance, performance against $k$ displays the expected behaviour of a local method (Table~\ref{tab:knnk} and Figure~\ref{fig:q33_kcurve}). With a single neighbour, ROC AUC is only approximately 0.66, because classification rests on one historical day and is consequently unstable. Performance improves rapidly as neighbours are added, exceeding 0.79 at $k = 9$ and 0.80 at $k = 15$, after which gains diminish and the curve settles onto a broad plateau. The maximum is attained at $k = 91$, with ROC AUC of 0.814 and accuracy of 0.735; $k = 75$ and $k = 101$ lie within 0.001 of that value, and the entire range from approximately $k = 51$ to $k = 151$ falls within the fold-to-fold variability (standard deviation about 0.013). The optimum is therefore interpreted as a region rather than a precise point. On the ROC AUC criterion, the optimal neighbourhood size is accordingly $k = 91$ under standardisation with Euclidean distance, subject to the qualification that any value within the plateau performs comparably. Accuracy follows the same trajectory, rising from 0.67 at $k = 1$ to approximately 0.735 on the plateau. In substantive terms, a single day of weather is a noisy guide, whereas aggregation over dozens of comparable historical days stabilises classification without erasing local structure. The distance measure is refined in the next item, and that search determines the final KNN specification retained thereafter. A qualification applies here and in the next two items: the same 10 folds are used both to select the hyperparameter and to report the selected performance, so the reported optima are expected to be slightly optimistic on genuinely new data. The breadth of the plateau limits the practical size of that optimism, but the quoted maxima should be read as selected scores rather than unbiased estimates, for which nested cross-validation or an untouched test set would be required.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrr}
+            \toprule
+            $k$ & Accuracy & ROC AUC \\
+            \midrule
+            1 & 0.670 & 0.660 \\
+            9 & 0.721 & 0.791 \\
+            15 & 0.727 & 0.804 \\
+            41 & 0.728 & 0.811 \\
+            91 (best ROC AUC) & 0.735 & 0.814 \\
+            151 & 0.735 & 0.813 \\
+            \bottomrule
+        \end{tabular}
+        \caption{KNN performance at selected neighbourhood sizes, scaled Euclidean, 10-fold cross-validation (Question 3.3)}
+        \label{tab:knnk}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 202931.png}
+        \caption{KNN score by neighbourhood size (Question 3.3 cell output)}
+        \label{fig:q33_kcurve}
+    \end{figure}
+
+    \item \textbf{Distance metrics, with and without standardisation:} A distance is an aggregate over features, so the units and dispersion of each feature determine its weight within that aggregate. For feature vectors $x$ and $z$ with coordinates indexed by $j$, the four measures compared are $d_{\mathrm{Euclidean}}(x, z) = \sqrt{\sum_j (x_j - z_j)^2}$, $d_{\mathrm{Manhattan}}(x, z) = \sum_j |x_j - z_j|$, $d_{\mathrm{Chebyshev}}(x, z) = \max_j |x_j - z_j|$, and $d_{\mathrm{cosine}}(x, z) = 1 - \frac{\sum_j x_j z_j}{\sqrt{\sum_j x_j^2}\, \sqrt{\sum_j z_j^2}}$. Euclidean distance squares each coordinate difference before summation, so a variable recorded in large units, such as pressure in hundreds, can dominate a variable recorded in small units, such as precipitation in single digits, even where the latter carries the predictive signal. Manhattan distance aggregates absolute differences and is therefore less dominated by any single large discrepancy, although a 50-unit pressure difference still outweighs a 2-unit precipitation difference on raw scales. Chebyshev distance keeps only the largest coordinate difference, so classification may hinge entirely on the variable with the widest raw range. Cosine distance compares the direction, or profile, of two vectors and disregards their overall magnitude, yet on raw scales the angle remains oriented towards the large-unit axes. Standardisation expresses each feature in units of its own dispersion, restoring an initially equal contribution. In the evaluation, the task is held constant and only the metric and the scaling are varied; for each of the eight combinations the same grid, $k \in \{5, 11, 21, 31, 51, 75, 101\}$, is searched and the combination is represented by its best $k$ on ROC AUC. Standardisation improves every metric, confirming that raw units distort the geometry of proximity (Table~\ref{tab:metrics}). The strongest combination overall is Manhattan distance with standardisation, at ROC AUC of 0.816, with standardised Euclidean distance close behind at 0.814 (its best value on the present grid occurs at $k = 101$ and is effectively tied with the $k = 91$ optimum of the previous item). Standardised cosine distance follows, and Chebyshev distance trails the group, consistent with its reliance on a single coordinate. Without standardisation, Manhattan distance again leads its group, at approximately 0.807, because absolute differences are less vulnerable than squared differences to the very large pressure discrepancies that penalise Euclidean distance, while unstandardised Chebyshev distance is weakest, at approximately 0.788. Two conclusions follow. First, the decision to standardise is more consequential than the choice among the leading metrics: the advantage of Manhattan over Euclidean under standardisation is minimal, whereas the gain from standardisation itself is pronounced for Chebyshev, cosine and Euclidean distances. Second, the Manhattan result admits a substantive explanation: meteorological differences are frequently concentrated in one coordinate, such as an abrupt precipitation increase, and a sum of absolute differences is less distorted by a single extreme coordinate than a sum of squares. Manhattan distance with standardisation, at its optimal $k = 101$, is therefore adopted as the final KNN specification; standardised Euclidean distance would perform in a closely comparable manner. As in the previous item, each figure is the best score over the searched $k$ grid on the same folds used for reporting, so the winning combinations carry a small selection optimism and the table is best read as a ranking on common folds, not as unbiased operational estimates.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrrrr}
+            \toprule
+            & \multicolumn{2}{c}{Standardised} & \multicolumn{2}{c}{Raw} \\
+            Metric & Best $k$ & ROC AUC & Best $k$ & ROC AUC \\
+            \midrule
+            Manhattan & 101 & 0.816 & 51 & 0.807 \\
+            Euclidean & 101 & 0.814 & 51 & 0.797 \\
+            Cosine & 75 & 0.811 & 51 & 0.794 \\
+            Chebyshev & 101 & 0.810 & 31 & 0.788 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Best KNN ROC AUC by distance metric and scaling (Question 3.4)}
+        \label{tab:metrics}
+    \end{table}
+    
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203043.png}
+        \caption{Best KNN ROC AUC by distance metric and scaling (Question 3.4 cell output)}
+        \label{fig:q34_metrics}
+    \end{figure}
+
+    \item \textbf{Best KNN versus the final tree:} The best KNN specification (Manhattan distance, $k = 101$, standardised) outperforms the final tree on both criteria, with accuracy of 0.739 against 0.726 and ROC AUC of 0.816 against 0.797. The ROC curves place KNN close to logistic regression (0.810) and clearly above the tree. The advantage is nevertheless modest, at approximately two AUC points, and is interpreted as superior ranking rather than a difference in kind. All three models occupy a narrow performance band, suggesting that the ten meteorological variables contain a limited quantity of next-day signal, most of which is recovered by each method. Both finalists had their hyperparameters selected on these same folds (tree depth in Question 2, $k$ and metric above), so both quoted scores are mildly optimistic in the same sense; the comparison on common folds remains informative, while the temporally ordered evaluation with retuning inside each training window in the next item is the appropriate source for less biased operational estimates. The advantages of KNN are that no functional form for the decision boundary is imposed, so curved and threshold patterns are accommodated automatically; all ten variables contribute smoothly; and incorporation of new observations updates the model immediately without refitting. The disadvantages are equally clear. Standardised inputs and retention of the historical dataset are required, every prediction entails a search through that store, and both $k$ and the distance measure demand careful tuning. No compact rule set is produced: the neighbouring days supporting a classification can be exhibited, but no short rule list comparable to a tree path can be supplied to operational staff. The method also degrades as dimensionality increases, since the distinction between near and distant observations weakens, although with ten predictors performance remains strong. In summary, KNN is assessed as the stronger pure scoring instrument for the pooled task, while the tree remains preferable where an explicit account of each classification is required.
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203340.png}
+        \caption{ROC curves for best KNN, final tree and logistic regression (Question 3.5 cell output)}
+        \label{fig:q35_roc}
+    \end{figure}
+
+    \item \textbf{Why random cross-validation can flatter a forecast, and the alternative:} Random cross-validation shuffles observations before partitioning, so the training set contains days immediately adjacent in time to each test day. Meteorological conditions persist in spells extending over several days. Where a wet spell runs from Monday to Friday, a shuffled partition may place Monday and Friday in training and Wednesday in testing; the model is then credited with recognising a spell that has effectively been partially observed, a materially easier task than anticipating a new spell in a future month. Precipitation on the current day, the strongest predictor, aggravates this leakage because its test values are closely replicated in neighbouring training days. Pooling six cities introduces a further channel: the same seasons and synoptic systems appear on both sides of the partition. Random fold estimates are therefore expected to be optimistic relative to the operational task, in which every forecast concerns genuinely future days, although the size and ranking of that optimism across model classes is an empirical question rather than a foregone conclusion. The appropriate alternative is validation in temporal order: observations are sorted by date and test blocks are always drawn from a later period than training blocks. In the notebook implementation, that principle is applied to tuning as well as to fitting: within each outer training window, the KNN distance metric and neighbourhood size, and the tree depth, are re-selected by inner temporal splits confined to that window, so no evaluation observation influences any modelling choice. Suitable designs include forward chaining, in which the training window expands as the test block advances, and a terminal holdout reserved until development is complete. The pooled check uses a five-fold time-series split over unique calendar dates, so that all six city observations sharing a date always fall on the same side of a split and no date appears in both training and test data, with the inner tuning splits grouped on dates in the same way; it is supplemented by per-city terminal holdouts that train on the first 80\% of each city record, with tuning repeated inside that training window, and evaluate on the final 20\% (305 days per city). Under the temporally ordered design, KNN attains ROC AUC of 0.809, the tree 0.785 and logistic regression 0.812 (Table~\ref{tab:temporal}). Comparison with the random-fold estimates (KNN 0.816, tree 0.797, logistic regression 0.810) shows that the effect of random validation is neither uniform nor large: the tree declines most, by approximately 0.011, KNN by approximately 0.006, and logistic regression rises slightly, by approximately 0.002. A general claim that temporally ordered scores are always lower is therefore not supported, and neither is any claim that random validation benefited the local method most; on these estimates the tree was flattered more than KNN. The defensible conclusion is narrower, namely that random folds produced modestly optimistic estimates for two of the three procedures and that model ranking under random folds need not survive temporal ordering. Retuning within each window also proves material: selected tree depths vary across windows (2, 3 and 5 all occur), as do the KNN metric and neighbourhood size, which confirms that settings carried over from full-timeline tuning would have imported information from the evaluation period. The city terminal holdouts display wide dispersion, from ROC AUC of 0.68 in Kampala to 0.91 in Dodoma, but those holdouts train city-specific models on approximately 1{,}219 days each, against pooled training on several thousand days, so their divergence reflects differences in training population and sample size in addition to validation design, and no direct numerical comparison with the pooled estimates is warranted. For daily rainfall forecasting, logistic regression remains the recommended model: it attains the strongest temporally ordered performance without any tuning that could leak, supplies smooth probabilities that can be thresholded according to operational costs, and refits rapidly as new data arrive. KNN, honestly retuned, remains a close challenger whose local perspective may identify regimes that a linear boundary overlooks, while the pruned tree retains value as the interpretable account of the classification.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrr}
+            \toprule
+            Model (temporally ordered) & Accuracy & ROC AUC \\
+            \midrule
+            KNN (retuned per window) & 0.733 & 0.809 \\
+            Tree (retuned per window) & 0.719 & 0.785 \\
+            Logistic regression & 0.733 & 0.812 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Temporally ordered validation with tuning repeated inside each training window (Question 3.6)}
+        \label{tab:temporal}
+    \end{table}
+\end{enumerate}
+
+%==================================================================
+\section{Question 4: Regression -- Predicting PM$_{2.5}$ Air Pollution}
+\subsection{Overview}
+This question uses the same dataset to predict the daily average concentration of fine particulate matter, PM$_{2.5}$ in $\mu$g/m$^3$, from the ten daily weather variables and the concentrations of six other pollutants (\texttt{co}, \texttt{no2}, \texttt{so2}, \texttt{o3}, \texttt{aod} and \texttt{dust}), giving 16 predictors in total. Unlike Questions 2 and 3, each of the six cities is studied separately, because the cities occupy very different climatic and urban regimes. The analysis reports the city mean of every predictor, the correlation of every predictor with PM$_{2.5}$ in each city (including the special case of PM$_{10}$), Lasso selection with 10-fold cross-validation in each city, KNN regression on the Lasso-selected features, and finally an honest nested comparison of KNN with all 16 predictors against KNN with only the Lasso-selected features.
+
+\subsection{Discussion of Results}
+\begin{enumerate}
+    \item \textbf{City means of the 16 predictors and atmospheric common sense:} The mean of each predictor in each city is displayed as a $4 \times 4$ grid of bar graphs (Figure~\ref{fig:q41_grid}), with a separate panel for each predictor because the variables have very different units. The grid and the accompanying table reveal distinct climatic signatures across the six cities, broadly consistent with geographical expectations. Dar es Salaam, the coastal city, records the highest \texttt{temp\_mean} (26.2 degrees), the highest dew point (21.7 degrees) and high humidity (77.2\%), reflecting moisture-laden sea air; its \texttt{pressure\_mean}, at approximately 1006.6~hPa, is likewise the highest, consistent with a station near sea level. At the opposite extreme, Nairobi and Kigali are high-altitude cities: Nairobi records the lowest pressure (approximately 839.2~hPa) and the lowest \texttt{temp\_mean} (19.3 degrees), with Kigali second on both measures, and the co-occurrence of reduced pressure and cooler temperatures at altitude is expected on physical grounds. Precipitation and aridity show the same coherence. Kampala, situated on Lake Victoria, records the highest mean precipitation (3.59~mm per day) and the highest humidity (78.9\%). Dodoma represents the dry inland case, with the lowest precipitation (1.38~mm), the lowest humidity (63.3\%), the highest radiation (261.3 units) and the highest wind speed (16.9 units), while Kigali records the lowest wind speed (5.8 units). The Dodoma profile is characteristic of a semi-arid interior location under comparatively open skies. Pollutant means are consistent with traffic intensity and urban scale. Nairobi records the highest \texttt{no2} (9.82) and \texttt{so2} (4.87), consistent with a large capital city with heavy road traffic, while Kampala records the highest \texttt{co} (459.9), consistent with traffic combined with charcoal and wood smoke in a dense urban setting. Dodoma records the lowest \texttt{co}, \texttt{no2} and \texttt{so2}, consistent with a smaller urban centre and stronger ventilation. Bujumbura records the highest \texttt{aod} (0.36) and \texttt{o3} (70.9), while Dodoma records the lowest \texttt{aod} (0.17). The dust mean is highest in Nairobi (2.22) and lowest in Dodoma (0.31); the latter ordering is somewhat counterintuitive given the arid setting of Dodoma, and suggests that the dust variable reflects dry-season haze and road dust near the measurement site rather than regional climate alone. Taken as a whole, the means are interpreted as genuine locational signals rather than noise, and imply that a single pooled pollution model would conflate markedly different regimes, which is why city-specific modelling is adopted for the remainder of the question.
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203518.png}
+        \caption{Mean of each of the 16 predictors by city (Question 4.1 cell output)}
+        \label{fig:q41_grid}
+    \end{figure}
+
+    \item \textbf{Correlations with PM$_{2.5}$, and the case of PM$_{10}$:} The pollutant block carries the association with PM$_{2.5}$ in every city, whereas most meteorological variables display weaker or city-specific relationships (Table~\ref{tab:strongest} and Figure~\ref{fig:q42_heatmap}). The strongest single correlate is aod in Kigali (0.787), Dodoma (0.832, the largest value in the table) and Bujumbura (0.747, followed by o3 at 0.681); co in Kampala (0.648) and Dar es Salaam (0.798); and so2 in Nairobi (0.819, with no2 at 0.756 and aod at 0.752 close behind). Aerosol optical depth therefore leads in three cities and a traffic-related gas in the remaining three. The pattern is substantively plausible: aod measures the column particle burden remotely, while co, no2 and so2 are co-emitted with fine particles by traffic and combustion sources, so both groups trace the same smoke and exhaust mixture. Only three variables exceed the $|r| > 0.3$ threshold in all six cities, namely co, no2 and aod, and these are accordingly designated relevant in every city. So2 exceeds the threshold in five cities, falling just short in Kigali (0.275), and o3 in four. Among the meteorological variables, wind speed exceeds the threshold in three cities, with a negative sign (Nairobi $-0.512$, Kampala $-0.385$, Dodoma $-0.375$), consistent with ventilation dispersing particles. Additional city-specific meteorological associations also exceed the threshold and should not be overlooked: in Nairobi, \texttt{temp\_mean} ($-0.431$), \texttt{temp\_min} ($-0.398$), \texttt{temp\_max} ($-0.322$) and \texttt{radiation\_mean} ($-0.421$); in Dodoma, \texttt{temp\_max} ($-0.325$); and in Bujumbura, \texttt{humidity\_mean} ($-0.301$). Same-day precipitation displays almost no linear association with PM$_{2.5}$, indicating that washout effects are weak at the daily-mean scale, or that wet days combine hours of low and high particle concentration. The association between PM$_{10}$ and PM$_{2.5}$ is very strong in every city, ranging from 0.877 in Kigali to 0.976 in Dar es Salaam. The potential advantage of including PM$_{10}$ is therefore substantial in a nowcasting setting: correlations of this size correspond to $r^2$ values of roughly 0.77 to 0.95, so PM$_{10}$ alone tracks most of the variation in PM$_{2.5}$. A strong relationship is physically expected, since PM$_{10}$ mass incorporates the fine fraction together with a coarse fraction, and the two series share sources and meteorological drivers. Physical overlap alone, however, does not make an independently measured PM$_{10}$ value leakage: leakage would require the predictor to be constructed from, or contaminated by, the target in a manner unavailable operationally. The operative distinction concerns prediction time. For estimating current PM$_{2.5}$ where a contemporaneous, independently measured PM$_{10}$ value is legitimately available, PM$_{10}$ could be a valid predictor, although its incremental benefit beyond the 16 specified predictors has not been tested here and is therefore stated only conditionally. For an advance forecast, the same-day PM$_{10}$ measurement would not yet exist and would be unsuitable on availability grounds; the same availability question would then apply, in principle, to the other same-day pollution measurements and daily weather summaries. Exclusion of PM$_{10}$ from the fitted models remains appropriate for the present task because the specified predictor set comprises the other 16 variables, while a PM$_{10}$ variable derived using the target itself would require separate scrutiny as a leakage risk.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{llrr}
+            \toprule
+            City & Strongest correlate & $r$ & PM$_{10}$--PM$_{2.5}$ $r$ \\
+            \midrule
+            Bujumbura & aod & 0.747 & 0.928 \\
+            Dar es Salaam & co & 0.798 & 0.976 \\
+            Dodoma & aod & 0.832 & 0.944 \\
+            Kampala & co & 0.648 & 0.889 \\
+            Kigali & aod & 0.787 & 0.877 \\
+            Nairobi & so2 & 0.819 & 0.951 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Strongest predictor of PM$_{2.5}$ and PM$_{10}$ correlation, by city (Question 4.2)}
+        \label{tab:strongest}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203638.png}
+        \caption{Correlation of each predictor with PM$_{2.5}$, by city (Question 4.2 cell output)}
+        \label{fig:q42_heatmap}
+    \end{figure}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203730.png}
+        \caption{Correlation between PM$_{10}$ and PM$_{2.5}$, by city (Question 4.2 cell output)}
+        \label{fig:q42_pm10}
+    \end{figure}
+
+    \item \textbf{Lasso selection against $\lambda$, compared with a correlation threshold:} A note on terminology is required first: the question denotes the penalty by lambda, whereas the Lasso implementation used here denotes the same quantity by alpha. Lambda is used in the text and figures, and the value is passed to the model through its alpha argument. Within every cross-validation fold, the scaler is estimated on the training partition only and applied to the test partition by means of a pipeline, ensuring that no test observation influences the scaling. The MSE curves exhibit a common shape across the six cities (Figure~\ref{fig:q43_lasso}). At large values of lambda the penalty dominates, coefficients are heavily shrunk and MSE is high; as lambda decreases, MSE falls rapidly before settling onto an extended flat region. At the optimum, Lasso retains all 16 predictors in Kigali, Dodoma and Bujumbura, 14 in Nairobi and Kampala, and 13 in Dar es Salaam (Table~\ref{tab:lasso}). The penalty grid was extended downwards to 0.0001 for this analysis; on that grid the optimal values are interior for five cities, while Dodoma is the exception, its optimum falling at 0.0001, the smallest value tested, so that figure is reported as the best tested value rather than an established interior optimum. Because the MSE curve is essentially flat in that region, the practical consequence is negligible, but the distinction is recorded for accuracy. The correlation threshold produces a markedly stricter selection, retaining 4 predictors in Kigali, 10 in Nairobi, 5 in Kampala, 7 in Dodoma, 6 in Bujumbura and 4 in Dar es Salaam. Disagreement operates predominantly in one direction, with Lasso retaining many variables that the threshold discards. The single disagreement in the opposite direction is identified explicitly: in Nairobi, \texttt{temp\_mean} passes the correlation threshold ($-0.431$) yet is not retained by Lasso, whose multivariate fit evidently assigns the shared temperature information to \texttt{temp\_max} and \texttt{temp\_min}. Every other threshold selection is retained by Lasso in every city. Two implications follow, stated with appropriate restraint. First, with approximately 1{,}518 observations per city, the MSE-optimal penalty is weak, because the data support many small coefficients; Lasso at its optimum therefore performs light trimming rather than aggressive selection, and nonzero coefficients at such a weak penalty do not, without further evidence, confirm that every retained predictor carries genuine signal. Second, the $|r| > 0.3$ rule is not an equivalent procedure: it is a marginal screen that disregards joint behaviour and consequently discards variables that may contribute conditionally, while, as the Nairobi case shows, occasionally retaining a variable whose contribution is absorbed by correlates in a multivariate fit.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrrrr}
+            \toprule
+            City & Best $\lambda$ & Best MSE & Lasso kept & $|r| > 0.3$ kept \\
+            \midrule
+            Bujumbura & 0.0003 & 16.99 & 16 & 6 \\
+            Dar es Salaam & 0.0040 & 2.47 & 13 & 4 \\
+            Dodoma & 0.0001 & 2.26 & 16 & 7 \\
+            Kampala & 0.0185 & 9.55 & 14 & 5 \\
+            Kigali & 0.0029 & 9.54 & 16 & 4 \\
+            Nairobi & 0.0074 & 4.29 & 14 & 10 \\
+            \bottomrule
+        \end{tabular}
+        \caption{Best Lasso penalty, cross-validated MSE and retained predictors, by city (Question 4.3)}
+        \label{tab:lasso}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203842.png}
+        \caption{Lasso cross-validation MSE against lambda, by city (Question 4.3 cell output)}
+        \label{fig:q43_lasso}
+    \end{figure}
+
+    \item \textbf{KNN regression on the Lasso-selected features:} All KNN regressions in this part use Euclidean distance with uniform neighbour weights on the standardised Lasso-selected features, the scaler being refitted inside every training fold. The optimal neighbourhood sizes for regression are considerably smaller than the values near 100 selected for the rainfall classification task. Optimal $k$ values fall in single digits, specifically 3 in Nairobi, 5 in Bujumbura, Dodoma and Kigali, and 7 in Dar es Salaam and Kampala (Table~\ref{tab:knnreg}). The MSE curves decline sharply from $k = 1$, attain a well-defined minimum, and subsequently rise slowly as larger neighbourhoods average over dissimilar atmospheric states. The contrast with classification is explicable: estimation of a continuous outcome is served by the mean of a tightly defined group of comparable days, whereas stabilisation of a noisy binary classification required aggregation over a much larger vote. Fit is strong throughout, with $R^2$ values between approximately 0.76 and 0.86. Nairobi (0.861) and Dar es Salaam (0.860) attain the highest proportions of explained variance, while Bujumbura exhibits the largest absolute MSE (20.02), consistent with its more variable PM$_{2.5}$ levels. These estimates employ Lasso variable lists selected on the full city samples before the KNN cross-validation, including observations that subsequently serve as held-out cases, so the results in this item are exploratory and potentially optimistic and should not be quoted as unbiased performance estimates. The following item provides the stronger evaluation, quantifying performance under a nested design in which every outer test fold is excluded from selection, scaling and tuning, and those nested results are the appropriate basis for comparing the two KNN routes.
+
+    \begin{table}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrrrr}
+            \toprule
+            City & Features used & Best $k$ & MSE & $R^2$ \\
+            \midrule
+            Bujumbura & 16 & 5 & 20.02 & 0.812 \\
+            Dar es Salaam & 13 & 7 & 2.40 & 0.860 \\
+            Dodoma & 16 & 5 & 2.53 & 0.820 \\
+            Kampala & 14 & 7 & 13.20 & 0.758 \\
+            Kigali & 16 & 5 & 13.65 & 0.777 \\
+            Nairobi & 14 & 3 & 6.38 & 0.861 \\
+            \bottomrule
+        \end{tabular}
+        \caption{KNN regression on Lasso-selected features, by city (Question 4.4)}
+        \label{tab:knnreg}
+    \end{table}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 203955.png}
+        \caption{KNN regression MSE against $k$ on Lasso features, by city (Question 4.4 cell output)}
+        \label{fig:q44_knnreg}
+    \end{figure}
+
+    \item \textbf{All predictors versus Lasso-selected features, honestly validated:} With variable selection repeated inside every inner tuning split, scaling confined to training data, each outer test fold evaluated once, and Lasso penalty candidates spanning the same range as in the Lasso item above ($10^{-4}$ to $10^{1.2}$, so the small penalties favoured there are not excluded here), the Lasso feature route produces small and mixed changes relative to the full predictor route (Table~\ref{tab:nested}). MSE improves modestly in Kampala (gain 0.18, the largest absolute change), Dar es Salaam (0.14), Dodoma (0.03) and Nairobi (0.02), and deteriorates in Kigali ($-0.12$) and Bujumbura ($-0.12$). Kampala illustrates the pattern in both metrics, with MSE falling from 14.03 to 13.85 and mean $R^2$ rising from 0.741 to 0.746. No uniform benefit is demonstrated, and no claim that screening is harmless or stabilising is warranted on this evidence; the accurate summary is that the two procedures perform closely, with city-dependent differences in both directions. The selection frequencies across the ten outer training folds describe how consistently variables were retained by the implemented procedure. The pollutant block (co, no2, so2, o3, aod and dust) is retained in nine or ten folds in nearly every city, the exceptions being no2 in Dar es Salaam (5 of 10) and co in Nairobi (9 of 10). Meteorological retentions are more variable: \texttt{temp\_mean} is retained in only 3 of 10 folds in Dar es Salaam and 2 of 10 in Kampala and Nairobi, while \texttt{humidity\_mean} ranges from 0 of 10 in Nairobi to 10 of 10 in Bujumbura and Dodoma. Because the Lasso set at its optimum remains inclusive (13 to 16 variables on full samples), the two KNN routes differ only through the occasional exclusion of a small number of meteorological variables, which accounts for the modest scale of every observed difference, favourable or otherwise. The overall assessment is accordingly qualified. The outer-fold design validates the implemented selection and tuning procedure without contamination of the evaluation folds, and within that design Lasso-based screening is neither demonstrably beneficial nor demonstrably damaging for predictive accuracy. Retention of the Lasso route can be justified only on the narrow grounds of a marginally smaller predictor set at comparable performance in four of six cities. Where a short sensor list is the objective, neither route supplies it, since the optimal Lasso is inclusive; a larger lambda along the flat region of the MSE curve would then be required, accepting the modest MSE increase there displayed as the price of parsimony.
+
+    \begin{table*}[h!]
+        \centering
+        \footnotesize
+        \begin{tabular}{lrrrrr}
+            \toprule
+            City & MSE, all 16 & $R^2$, all 16 & MSE, Lasso & $R^2$, Lasso & MSE gain \\
+            \midrule
+            Bujumbura & 20.23 & 0.811 & 20.35 & 0.810 & $-0.12$ \\
+            Dar es Salaam & 2.56 & 0.851 & 2.42 & 0.860 & $+0.14$ \\
+            Dodoma & 2.58 & 0.816 & 2.55 & 0.818 & $+0.03$ \\
+            Kampala & 14.03 & 0.741 & 13.85 & 0.746 & $+0.18$ \\
+            Kigali & 13.65 & 0.777 & 13.77 & 0.775 & $-0.12$ \\
+            Nairobi & 6.87 & 0.852 & 6.85 & 0.851 & $+0.02$ \\
+            \bottomrule
+        \end{tabular}
+        \caption{Nested comparison of KNN with all predictors against Lasso features (Question 4.5)}
+        \label{tab:nested}
+    \end{table*}
+
+    \begin{figure}[h!]
+        \centering
+        \includegraphics[width=0.5\linewidth]{Screenshot 2026-11-16 204051.png}
+        \caption{KNN regression MSE with all features against Lasso features (Question 4.5 cell output)}
+        \label{fig:q45_nested}
+    \end{figure}
+\end{enumerate}
+
+%==================================================================
+\section{Conclusion}
+Three practical conclusions stand out from this assignment. First, nonlinearity is not a technical footnote: threshold and saturation behaviour is exactly what the rainfall data display, and the methods that respect it (trees, neighbourhood methods and information-theoretic screening) recover structure that a purely linear, correlation-based view would miss. Second, for daily rain classification the honest, temporally ordered comparison recommends logistic regression, which attains the best temporally ordered ROC AUC (0.812) with smooth probabilities that can be thresholded according to operational costs; the best KNN classifier (ROC AUC 0.816 under random folds, 0.809 temporally ordered) is a close challenger, and the pruned depth-4 tree (0.797 and 0.785 respectively) remains the most interpretable account, reducing 1{,}623 leaves to 16 while gaining about 15 AUC points over the unpruned tree. Third, for PM$_{2.5}$ regression the pollutant block, above all co, no2 and aod, carries the signal in every city; Lasso at its cross-validated optimum is inclusive rather than selective (13 to 16 of 16 predictors), KNN regression performs strongly in every city ($R^2$ roughly 0.74 to 0.86 under honest nested validation), and Lasso pre-screening neither reliably helps nor reliably harms KNN, so it should be retained only where a marginally shorter predictor list is valued for its own sake. Throughout, the recurring discipline is that scaling, selection and tuning belong inside training folds only; the results that respect that discipline, including the temporally ordered rainfall evaluation, are the ones on which the recommendations above rest.
+
+%==================================================================
+\begin{thebibliography}{00}
+
+\bibitem{eastafrica}
+Course dataset, ``East African daily weather and air quality for six cities, 29 July 2022--29 September 2026 (east\_africa\_weather\_airquality\_daily.csv),'' provided via Canvas.
+
+\end{thebibliography}
+
+\end{document}
